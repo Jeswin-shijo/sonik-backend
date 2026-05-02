@@ -6,7 +6,9 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { FavoriteTrack } from './FavoriteTrack.entity';
 import { Playlist } from './Playlist.entity';
+import { RecentPlay } from './RecentPlay.entity';
 
 @Entity({ name: 'users' })
 export class User {
@@ -36,6 +38,12 @@ export class User {
 
   @OneToMany(() => Playlist, (playlist) => playlist.user)
   playlists!: Playlist[];
+
+  @OneToMany(() => FavoriteTrack, (favoriteTrack) => favoriteTrack.user)
+  favoriteTracks!: FavoriteTrack[];
+
+  @OneToMany(() => RecentPlay, (recentPlay) => recentPlay.user)
+  recentPlays!: RecentPlay[];
 
   @CreateDateColumn()
   createdAt!: Date;

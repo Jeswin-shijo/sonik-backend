@@ -4,8 +4,14 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
+import { FavoriteTrack } from './entities/FavoriteTrack.entity';
 import { Playlist } from './entities/Playlist.entity';
+import { PlaylistTrack } from './entities/PlaylistTrack.entity';
+import { RecentPlay } from './entities/RecentPlay.entity';
+import { Track } from './entities/Track.entity';
 import { User } from './entities/User.entity';
+import { PlaylistsModule } from './playlists/playlists.module';
+import { TracksModule } from './tracks/tracks.module';
 
 const isTestEnvironment = process.env.NODE_ENV === 'test';
 
@@ -21,7 +27,14 @@ const databaseImports = isTestEnvironment
           username: configService.get<string>('DB_USERNAME', 'sonik_user'),
           password: configService.get<string>('DB_PASSWORD', 'sonikpass'),
           database: configService.get<string>('DB_DATABASE', 'sonik_db'),
-          entities: [User, Playlist],
+          entities: [
+            User,
+            Track,
+            Playlist,
+            PlaylistTrack,
+            FavoriteTrack,
+            RecentPlay,
+          ],
           synchronize:
             configService.get<string>('DB_SYNCHRONIZE', 'true') === 'true',
           logging: configService.get<string>('DB_LOGGING', 'false') === 'true',
@@ -29,7 +42,9 @@ const databaseImports = isTestEnvironment
       }),
     ];
 
-const featureModules = isTestEnvironment ? [] : [AuthModule];
+const featureModules = isTestEnvironment
+  ? []
+  : [AuthModule, TracksModule, PlaylistsModule];
 
 @Module({
   imports: [

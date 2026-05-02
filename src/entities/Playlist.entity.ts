@@ -4,9 +4,11 @@ import {
   Entity,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { PlaylistTrack } from './PlaylistTrack.entity';
 import { User } from './User.entity';
 
 @Entity({ name: 'playlists' })
@@ -17,8 +19,8 @@ export class Playlist {
   @Column()
   name!: string;
 
-  @Column('simple-array')
-  tracks!: string[]; // Track IDs
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  description!: string | null;
 
   @Column({ default: false })
   isFavorite!: boolean;
@@ -32,6 +34,9 @@ export class Playlist {
   })
   @JoinColumn({ name: 'userId' })
   user!: User;
+
+  @OneToMany(() => PlaylistTrack, (playlistTrack) => playlistTrack.playlist)
+  playlistTracks!: PlaylistTrack[];
 
   @CreateDateColumn()
   createdAt!: Date;
