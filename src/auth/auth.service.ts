@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -17,14 +18,20 @@ import { GoogleAuthDto } from './dto/google-auth.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { SendOtpDto } from './dto/send-otp.dto';
+import { VerifyOtpSignupDto } from './dto/verify-otp-signup.dto';
+import { VerifyOtpResetPasswordDto } from './dto/verify-otp-reset-password.dto';
+import { EmailService } from './email.service';
 
 type AuthProvider = 'local' | 'google' | 'hybrid';
+type UserRole = 'user' | 'admin';
 
 type AuthTokenPayload = {
   sub: number;
   email: string;
   profileName: string;
   authProvider: AuthProvider;
+  role: UserRole;
 };
 
 @Injectable()
@@ -36,6 +43,7 @@ export class AuthService {
     private readonly usersRepository: Repository<User>,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly emailService: EmailService,
   ) {}
 
   async register(registerDto: RegisterDto) {
@@ -51,9 +59,12 @@ export class AuthService {
       profileName: registerDto.profileName.trim(),
       passwordHash: await this.hashPassword(registerDto.password),
       authProvider: 'local',
+      role: this.resolveRole(email),
       googleId: null,
       resetPasswordTokenHash: null,
       resetPasswordExpiresAt: null,
+      otpCode: null,
+      otpExpiresAt: null,
     });
 
     const savedUser = await this.usersRepository.save(user);
@@ -75,6 +86,12 @@ export class AuthService {
 
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid email or password.');
+    }
+
+    const expectedRole = this.resolveRole(user.email);
+    if (user.role !== expectedRole) {
+      user.role = expectedRole;
+      await this.usersRepository.save(user);
     }
 
     return this.buildAuthResponse(user, 'Signed in successfully.');
@@ -121,14 +138,18 @@ export class AuthService {
         profileName,
         passwordHash: null,
         authProvider: 'google',
+        role: this.resolveRole(email),
         googleId: payload.sub,
         resetPasswordTokenHash: null,
         resetPasswordExpiresAt: null,
+        otpCode: null,
+        otpExpiresAt: null,
       });
     } else {
       user.googleId = payload.sub;
       user.profileName = user.profileName || profileName;
       user.authProvider = user.passwordHash ? 'hybrid' : 'google';
+      user.role = this.resolveRole(user.email);
     }
 
     const savedUser = await this.usersRepository.save(user);
@@ -203,6 +224,151 @@ export class AuthService {
     return this.buildAuthResponse(savedUser, 'Password updated successfully.');
   }
 
+  async sendOtp(sendOtpDto: SendOtpDto) {
+    const email = sendOtpDto.email.trim().toLowerCase();
+    const purpose = sendOtpDto.purpose;
+    const user = await this.usersRepository.findOne({ where: { email } });
+
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const otpHash = await this.hashPassword(otpCode);
+
+    if (purpose === 'signup') {
+      if (user?.passwordHash) {
+        throw new ConflictException(
+          'An account with that email already exists. Please sign in instead.',
+        );
+      }
+
+      if (user) {
+        user.otpCode = otpHash;
+        user.otpExpiresAt = otpExpiresAt;
+        await this.usersRepository.save(user);
+      } else {
+        const tempUser = this.usersRepository.create({
+          email,
+          profileName: '',
+          passwordHash: null,
+          authProvider: 'local',
+          googleId: null,
+          resetPasswordTokenHash: null,
+          resetPasswordExpiresAt: null,
+          otpCode: otpHash,
+          otpExpiresAt,
+        });
+        await this.usersRepository.save(tempUser);
+      }
+    } else {
+      if (!user) {
+        return {
+          message:
+            'If an account with that email exists, a verification code has been sent.',
+          expiresAt: otpExpiresAt.toISOString(),
+        };
+      }
+
+      user.otpCode = otpHash;
+      user.otpExpiresAt = otpExpiresAt;
+      await this.usersRepository.save(user);
+    }
+
+    const emailSent = await this.emailService.sendOtpEmail(
+      email,
+      otpCode,
+      purpose,
+    );
+
+    return {
+      message: emailSent
+        ? 'Verification code sent to your email.'
+        : 'OTP generated. Email delivery is not configured yet.',
+      devOtp: !emailSent && this.shouldExposeOtp() ? otpCode : undefined,
+      expiresAt: otpExpiresAt.toISOString(),
+    };
+  }
+
+  async verifyOtpSignup(verifyOtpSignupDto: VerifyOtpSignupDto) {
+    const email = verifyOtpSignupDto.email.trim().toLowerCase();
+    const user = await this.usersRepository.findOne({ where: { email } });
+
+    if (!user) {
+      throw new NotFoundException('No account found with this email.');
+    }
+
+    if (!user.otpCode || !user.otpExpiresAt) {
+      throw new BadRequestException('No OTP request found. Please request a new OTP.');
+    }
+
+    if (user.otpExpiresAt.getTime() < Date.now()) {
+      throw new BadRequestException('OTP has expired. Please request a new OTP.');
+    }
+
+    const isOtpValid = await compare(verifyOtpSignupDto.otp, user.otpCode);
+
+    if (!isOtpValid) {
+      throw new UnauthorizedException('Invalid OTP. Please check and try again.');
+    }
+
+    user.profileName = verifyOtpSignupDto.profileName.trim();
+    user.passwordHash = await this.hashPassword(verifyOtpSignupDto.password);
+    user.otpCode = null;
+    user.otpExpiresAt = null;
+    user.authProvider = 'local';
+    user.role = this.resolveRole(user.email);
+
+    const savedUser = await this.usersRepository.save(user);
+
+    return this.buildAuthResponse(savedUser, 'Account created successfully.');
+  }
+
+  async verifyOtpResetPassword(verifyOtpResetPasswordDto: VerifyOtpResetPasswordDto) {
+    const email = verifyOtpResetPasswordDto.email.trim().toLowerCase();
+    const user = await this.usersRepository.findOne({ where: { email } });
+
+    if (!user) {
+      throw new NotFoundException('No account found with this email.');
+    }
+
+    if (!user.otpCode || !user.otpExpiresAt) {
+      throw new BadRequestException('No OTP request found. Please request a new OTP.');
+    }
+
+    if (user.otpExpiresAt.getTime() < Date.now()) {
+      throw new BadRequestException('OTP has expired. Please request a new OTP.');
+    }
+
+    const isOtpValid = await compare(verifyOtpResetPasswordDto.otp, user.otpCode);
+
+    if (!isOtpValid) {
+      throw new UnauthorizedException('Invalid OTP. Please check and try again.');
+    }
+
+    // Update password
+    user.passwordHash = await this.hashPassword(verifyOtpResetPasswordDto.newPassword);
+    user.otpCode = null;
+    user.otpExpiresAt = null;
+    user.authProvider = user.googleId ? 'hybrid' : 'local';
+
+    const savedUser = await this.usersRepository.save(user);
+
+    return this.buildAuthResponse(savedUser, 'Password updated successfully.');
+  }
+
+  async deleteAccount(userId: number) {
+    const user = await this.usersRepository.findOne({ where: { id: userId } });
+
+    if (!user) {
+      throw new NotFoundException('User account not found.');
+    }
+
+    // Delete related data first (cascade should handle this, but being explicit)
+    await this.usersRepository.delete(userId);
+
+    return {
+      message: 'Account and all related data have been deleted successfully.',
+    };
+  }
+
   async getCurrentUser(userId: number) {
     const user = await this.usersRepository.findOne({ where: { id: userId } });
 
@@ -230,6 +396,7 @@ export class AuthService {
       email: user.email,
       profileName: user.profileName,
       authProvider: user.authProvider,
+      role: user.role,
       googleConnected: Boolean(user.googleId),
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
@@ -242,6 +409,7 @@ export class AuthService {
       email: user.email,
       profileName: user.profileName,
       authProvider: user.authProvider,
+      role: user.role,
     };
 
     return this.jwtService.signAsync(payload);
@@ -268,6 +436,10 @@ export class AuthService {
     );
   }
 
+  private shouldExposeOtp() {
+    return this.shouldExposeResetToken();
+  }
+
   private hashResetToken(token: string) {
     return createHash('sha256').update(token).digest('hex');
   }
@@ -278,5 +450,16 @@ export class AuthService {
       this.configService.get<string>('GOOGLE_IOS_CLIENT_ID'),
       this.configService.get<string>('GOOGLE_ANDROID_CLIENT_ID'),
     ].filter((clientId): clientId is string => Boolean(clientId?.trim()));
+  }
+
+  private resolveRole(email: string): UserRole {
+    const adminList = this.configService.get<string>('ADMIN_EMAILS', '');
+    const normalized = email.trim().toLowerCase();
+    const isAdmin = adminList
+      .split(',')
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean)
+      .includes(normalized);
+    return isAdmin ? 'admin' : 'user';
   }
 }

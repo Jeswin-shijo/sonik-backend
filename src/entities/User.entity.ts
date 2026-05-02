@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { FavoriteTrack } from './FavoriteTrack.entity';
 import { Playlist } from './Playlist.entity';
+import { QueueItem } from './QueueItem.entity';
 import { RecentPlay } from './RecentPlay.entity';
 
 @Entity({ name: 'users' })
@@ -27,6 +28,9 @@ export class User {
   @Column({ type: 'varchar', length: 20, default: 'local' })
   authProvider!: 'local' | 'google' | 'hybrid';
 
+  @Column({ type: 'varchar', length: 20, default: 'user' })
+  role!: 'user' | 'admin';
+
   @Column({ type: 'varchar', length: 255, nullable: true, unique: true })
   googleId!: string | null;
 
@@ -36,6 +40,12 @@ export class User {
   @Column({ type: 'datetime', nullable: true })
   resetPasswordExpiresAt!: Date | null;
 
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  otpCode!: string | null;
+
+  @Column({ type: 'datetime', nullable: true })
+  otpExpiresAt!: Date | null;
+
   @OneToMany(() => Playlist, (playlist) => playlist.user)
   playlists!: Playlist[];
 
@@ -44,6 +54,9 @@ export class User {
 
   @OneToMany(() => RecentPlay, (recentPlay) => recentPlay.user)
   recentPlays!: RecentPlay[];
+
+  @OneToMany(() => QueueItem, (queueItem) => queueItem.user)
+  queueItems!: QueueItem[];
 
   @CreateDateColumn()
   createdAt!: Date;

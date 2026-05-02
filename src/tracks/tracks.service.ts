@@ -1,6 +1,7 @@
 import {
   Injectable,
   InternalServerErrorException,
+  NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -9,9 +10,12 @@ import { extname, join, parse } from 'path';
 import type { Response } from 'express';
 import { Repository } from 'typeorm';
 import { FavoriteTrack } from '../entities/FavoriteTrack.entity';
+import { QueueItem } from '../entities/QueueItem.entity';
 import { RecentPlay } from '../entities/RecentPlay.entity';
 import { Track } from '../entities/Track.entity';
 import { User } from '../entities/User.entity';
+import { UploadTrackDto } from './dto/upload-track.dto';
+import { unlinkSync } from 'fs';
 
 export type PlayerTrack = {
   id: string;
@@ -24,6 +28,30 @@ export type PlayerTrack = {
   coverUrl: string | null;
   mood: string;
   plays: string;
+};
+
+export type QueueMode = 'next' | 'end';
+
+export type QueueTrack = {
+  id: string;
+  position: number;
+  track: PlayerTrack;
+};
+
+export type LibraryArtist = {
+  id: string;
+  name: string;
+  trackCount: number;
+  albumCount: number;
+  tracks: PlayerTrack[];
+};
+
+export type LibraryAlbum = {
+  id: string;
+  title: string;
+  artist: string;
+  trackCount: number;
+  tracks: PlayerTrack[];
 };
 
 const audioExtensions = new Set(['.flac', '.mp3', '.m4a', '.ogg', '.wav']);
@@ -46,6 +74,8 @@ export class TracksService implements OnModuleInit {
     private readonly favoriteTracksRepository: Repository<FavoriteTrack>,
     @InjectRepository(RecentPlay)
     private readonly recentPlaysRepository: Repository<RecentPlay>,
+    @InjectRepository(QueueItem)
+    private readonly queueItemsRepository: Repository<QueueItem>,
   ) {}
 
   async onModuleInit() {
@@ -53,15 +83,56 @@ export class TracksService implements OnModuleInit {
   }
 
   async listTracks() {
-    const tracks = await this.tracksRepository.find({
-      where: { isActive: true },
-      order: {
-        title: 'ASC',
-      },
-    });
+    const tracks = await this.getActiveTracks();
 
     return {
       tracks: tracks.map((track, index) => this.serializeTrack(track, index)),
+    };
+  }
+
+  async listArtists() {
+    const tracks = await this.getActiveTracks();
+
+    return {
+      artists: this.buildArtists(tracks),
+    };
+  }
+
+  async getArtistById(id: string) {
+    const tracks = await this.getActiveTracks();
+    const artist = this.buildArtists(tracks).find(
+      (candidate) => candidate.id === id,
+    );
+
+    if (!artist) {
+      throw new NotFoundException('Artist not found.');
+    }
+
+    return {
+      artist,
+    };
+  }
+
+  async listAlbums() {
+    const tracks = await this.getActiveTracks();
+
+    return {
+      albums: this.buildAlbums(tracks),
+    };
+  }
+
+  async getAlbumById(id: string) {
+    const tracks = await this.getActiveTracks();
+    const album = this.buildAlbums(tracks).find(
+      (candidate) => candidate.id === id,
+    );
+
+    if (!album) {
+      throw new NotFoundException('Album not found.');
+    }
+
+    return {
+      album,
     };
   }
 
@@ -159,6 +230,83 @@ export class TracksService implements OnModuleInit {
     };
   }
 
+  async listQueue(userId: number) {
+    const queueItems = await this.queueItemsRepository.find({
+      where: {
+        user: { id: userId },
+      },
+      relations: {
+        track: true,
+      },
+      order: {
+        position: 'ASC',
+        createdAt: 'ASC',
+      },
+    });
+
+    return {
+      queue: queueItems.map((queueItem, index) =>
+        this.serializeQueueItem(queueItem, index),
+      ),
+    };
+  }
+
+  async addToQueue(
+    userId: number,
+    trackId: string,
+    mode: QueueMode = 'end',
+  ) {
+    const track = await this.getTrackById(trackId);
+
+    if (!track) {
+      throw new NotFoundException('Track not found.');
+    }
+
+    const position =
+      mode === 'next'
+        ? await this.reserveNextQueuePosition(userId)
+        : await this.getNextQueuePosition(userId);
+
+    const queueItem = await this.queueItemsRepository.save(
+      this.queueItemsRepository.create({
+        user: { id: userId } as User,
+        track,
+        position,
+      }),
+    );
+    const queue = await this.listQueue(userId);
+
+    return {
+      message:
+        mode === 'next' ? 'Track will play next.' : 'Track added to queue.',
+      queueItem: this.serializeQueueItem(queueItem, position),
+      queue: queue.queue,
+    };
+  }
+
+  async removeQueueItem(userId: number, queueItemId: string) {
+    await this.queueItemsRepository
+      .createQueryBuilder()
+      .delete()
+      .where('id = :queueItemId', { queueItemId: Number(queueItemId) })
+      .andWhere('userId = :userId', { userId })
+      .execute();
+
+    return this.listQueue(userId);
+  }
+
+  async clearQueue(userId: number) {
+    await this.queueItemsRepository
+      .createQueryBuilder()
+      .delete()
+      .where('userId = :userId', { userId })
+      .execute();
+
+    return {
+      queue: [],
+    };
+  }
+
   async recordRecentPlay(
     userId: number,
     trackId: string,
@@ -193,6 +341,68 @@ export class TracksService implements OnModuleInit {
     };
   }
 
+  async uploadTrack(
+    metadata: UploadTrackDto,
+    audioFile: Express.Multer.File,
+    coverFile: Express.Multer.File | undefined,
+  ) {
+    const storageKey = `upload:${audioFile.filename}`;
+    const localFilePath = join('uploads', 'tracks', audioFile.filename);
+    const coverUrl = coverFile
+      ? `/uploads/covers/${coverFile.filename}`
+      : null;
+
+    const track = this.tracksRepository.create({
+      storageKey,
+      title: metadata.title.trim(),
+      artist: metadata.artist?.trim() || 'Unknown Artist',
+      album: metadata.album?.trim() || 'Local Library',
+      genre: metadata.genre?.trim() || null,
+      mood: metadata.mood?.trim() || 'Local',
+      source: 'local' as const,
+      streamUrl: null,
+      coverUrl,
+      localFileName: audioFile.filename,
+      localFilePath,
+      mimeType: audioFile.mimetype || 'audio/mpeg',
+      sizeBytes: String(audioFile.size),
+      isActive: true,
+    });
+
+    const saved = await this.tracksRepository.save(track);
+
+    return {
+      message: 'Track uploaded successfully.',
+      track: this.serializeTrack(saved, 0),
+    };
+  }
+
+  async deactivateTrack(trackId: string) {
+    const track = await this.tracksRepository.findOne({
+      where: { id: Number(trackId) },
+    });
+
+    if (!track) {
+      throw new NotFoundException('Track not found.');
+    }
+
+    track.isActive = false;
+    await this.tracksRepository.save(track);
+
+    if (track.localFilePath) {
+      const absolute = join(process.cwd(), track.localFilePath);
+      try {
+        if (existsSync(absolute)) {
+          unlinkSync(absolute);
+        }
+      } catch {
+        // best-effort cleanup; row stays inactive even if file delete fails
+      }
+    }
+
+    return { message: 'Track removed.' };
+  }
+
   streamTrack(track: Track, range: string | undefined, response: Response) {
     const filePath = track.localFilePath
       ? join(process.cwd(), track.localFilePath)
@@ -225,6 +435,126 @@ export class TracksService implements OnModuleInit {
     });
 
     return createReadStream(filePath, { start, end }).pipe(response);
+  }
+
+  private getActiveTracks() {
+    return this.tracksRepository.find({
+      where: { isActive: true },
+      order: {
+        title: 'ASC',
+      },
+    });
+  }
+
+  private buildArtists(tracks: Track[]): LibraryArtist[] {
+    const artists = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        albums: Set<string>;
+        tracks: PlayerTrack[];
+      }
+    >();
+
+    tracks.forEach((track, index) => {
+      const name = track.artist || 'Unknown Artist';
+      const id = this.getCollectionId(name);
+      const artist = artists.get(id) ?? {
+        id,
+        name,
+        albums: new Set<string>(),
+        tracks: [],
+      };
+
+      artist.albums.add(track.album || 'Local Library');
+      artist.tracks.push(this.serializeTrack(track, index));
+      artists.set(id, artist);
+    });
+
+    return [...artists.values()]
+      .map((artist) => ({
+        id: artist.id,
+        name: artist.name,
+        trackCount: artist.tracks.length,
+        albumCount: artist.albums.size,
+        tracks: artist.tracks,
+      }))
+      .sort((first, second) => first.name.localeCompare(second.name));
+  }
+
+  private buildAlbums(tracks: Track[]): LibraryAlbum[] {
+    const albums = new Map<
+      string,
+      {
+        id: string;
+        title: string;
+        artist: string;
+        tracks: PlayerTrack[];
+      }
+    >();
+
+    tracks.forEach((track, index) => {
+      const title = track.album || 'Local Library';
+      const artist = track.artist || 'Unknown Artist';
+      const key = `${title}\u0000${artist}`;
+      const id = this.getCollectionId(key);
+      const album = albums.get(id) ?? {
+        id,
+        title,
+        artist,
+        tracks: [],
+      };
+
+      album.tracks.push(this.serializeTrack(track, index));
+      albums.set(id, album);
+    });
+
+    return [...albums.values()]
+      .map((album) => ({
+        id: album.id,
+        title: album.title,
+        artist: album.artist,
+        trackCount: album.tracks.length,
+        tracks: album.tracks,
+      }))
+      .sort((first, second) => first.title.localeCompare(second.title));
+  }
+
+  private getCollectionId(value: string) {
+    return Buffer.from(value).toString('base64url');
+  }
+
+  private serializeQueueItem(queueItem: QueueItem, index: number): QueueTrack {
+    return {
+      id: String(queueItem.id),
+      position: queueItem.position,
+      track: this.serializeTrack(queueItem.track, index),
+    };
+  }
+
+  private async getNextQueuePosition(userId: number) {
+    const result = await this.queueItemsRepository
+      .createQueryBuilder('queueItem')
+      .select('MAX(queueItem.position)', 'max')
+      .where('queueItem.userId = :userId', { userId })
+      .getRawOne<{ max: string | number | null }>();
+    const currentMax = Number(result?.max ?? -1);
+
+    return Number.isFinite(currentMax) ? currentMax + 1 : 0;
+  }
+
+  private async reserveNextQueuePosition(userId: number) {
+    await this.queueItemsRepository
+      .createQueryBuilder()
+      .update(QueueItem)
+      .set({
+        position: () => 'position + 1',
+      })
+      .where('userId = :userId', { userId })
+      .execute();
+
+    return 0;
   }
 
   private async seedLocalTracks() {

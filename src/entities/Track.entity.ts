@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { FavoriteTrack } from './FavoriteTrack.entity';
 import { PlaylistTrack } from './PlaylistTrack.entity';
+import { QueueItem } from './QueueItem.entity';
 import { RecentPlay } from './RecentPlay.entity';
 
 @Entity({ name: 'tracks' })
@@ -74,6 +75,9 @@ export class Track {
 
   @OneToMany(() => RecentPlay, (recentPlay) => recentPlay.track)
   recentPlays!: RecentPlay[];
+
+  @OneToMany(() => QueueItem, (queueItem) => queueItem.track)
+  queueItems!: QueueItem[];
 
   @CreateDateColumn()
   createdAt!: Date;

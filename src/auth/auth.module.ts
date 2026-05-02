@@ -3,8 +3,10 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import type { StringValue } from 'ms';
+import { AdminGuard } from './admin.guard';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { EmailService } from './email.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { User } from '../entities/User.entity';
 
@@ -29,7 +31,7 @@ import { User } from '../entities/User.entity';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtAuthGuard],
-  exports: [AuthService, JwtAuthGuard, JwtModule],
+  providers: [AuthService, EmailService, JwtAuthGuard, AdminGuard],
+  exports: [AuthService, JwtAuthGuard, AdminGuard, JwtModule],
 })
 export class AuthModule {}

@@ -1,10 +1,13 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Post, Req, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { GoogleAuthDto } from './dto/google-auth.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { SendOtpDto } from './dto/send-otp.dto';
+import { VerifyOtpSignupDto } from './dto/verify-otp-signup.dto';
+import { VerifyOtpResetPasswordDto } from './dto/verify-otp-reset-password.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import type { Request } from 'express';
 import type { AuthenticatedRequest } from './interfaces/authenticated-request.interface';
@@ -42,6 +45,27 @@ export class AuthController {
   @Post('reset-password')
   resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
     return this.authService.resetPassword(resetPasswordDto);
+  }
+
+  @Post('send-otp')
+  sendOtp(@Body() sendOtpDto: SendOtpDto) {
+    return this.authService.sendOtp(sendOtpDto);
+  }
+
+  @Post('verify-otp-signup')
+  verifyOtpSignup(@Body() verifyOtpSignupDto: VerifyOtpSignupDto) {
+    return this.authService.verifyOtpSignup(verifyOtpSignupDto);
+  }
+
+  @Post('verify-otp-reset-password')
+  verifyOtpResetPassword(@Body() verifyOtpResetPasswordDto: VerifyOtpResetPasswordDto) {
+    return this.authService.verifyOtpResetPassword(verifyOtpResetPasswordDto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('account')
+  deleteAccount(@Req() request: AuthenticatedRequest) {
+    return this.authService.deleteAccount(request.user.sub);
   }
 
   @UseGuards(JwtAuthGuard)

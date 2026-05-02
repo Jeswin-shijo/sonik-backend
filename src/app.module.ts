@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { FavoriteTrack } from './entities/FavoriteTrack.entity';
 import { Playlist } from './entities/Playlist.entity';
 import { PlaylistTrack } from './entities/PlaylistTrack.entity';
+import { QueueItem } from './entities/QueueItem.entity';
 import { RecentPlay } from './entities/RecentPlay.entity';
 import { Track } from './entities/Track.entity';
 import { User } from './entities/User.entity';
@@ -34,6 +35,7 @@ const databaseImports = isTestEnvironment
             PlaylistTrack,
             FavoriteTrack,
             RecentPlay,
+            QueueItem,
           ],
           synchronize:
             configService.get<string>('DB_SYNCHRONIZE', 'true') === 'true',

@@ -6,6 +6,7 @@ export type AuthenticatedRequest = Request & {
     email: string;
     profileName: string;
     authProvider: 'local' | 'google' | 'hybrid';
+    role: 'user' | 'admin';
     iat?: number;
     exp?: number;
   };
