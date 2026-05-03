@@ -346,7 +346,7 @@ export class TracksService implements OnModuleInit {
     audioFile: Express.Multer.File,
     coverFile: Express.Multer.File | undefined,
   ) {
-    const storageKey = `upload:${audioFile.filename}`;
+    const storageKey = `local:${Buffer.from(audioFile.filename).toString('base64url')}`;
     const localFilePath = join('uploads', 'tracks', audioFile.filename);
     const coverUrl = coverFile
       ? `/uploads/covers/${coverFile.filename}`
@@ -576,14 +576,16 @@ export class TracksService implements OnModuleInit {
   private async upsertLocalTrack(fileName: string) {
     const metadata = this.readLocalTrackMetadata(fileName);
     const existingTrack = await this.tracksRepository.findOne({
-      where: { storageKey: metadata.storageKey },
+      where: { localFileName: fileName },
     });
 
     if (existingTrack) {
       await this.tracksRepository.save({
         ...existingTrack,
-        ...metadata,
-        coverUrl: existingTrack.coverUrl ?? metadata.coverUrl,
+        localFileName: fileName,
+        localFilePath: metadata.localFilePath,
+        mimeType: metadata.mimeType,
+        sizeBytes: metadata.sizeBytes,
         isActive: true,
       });
       return;
