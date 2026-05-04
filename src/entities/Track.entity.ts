@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
@@ -10,6 +11,9 @@ import { FavoriteTrack } from './FavoriteTrack.entity';
 import { PlaylistTrack } from './PlaylistTrack.entity';
 import { QueueItem } from './QueueItem.entity';
 import { RecentPlay } from './RecentPlay.entity';
+import { Singer } from './Singer.entity';
+import { Artist } from './Artist.entity';
+import { Lyricist } from './Lyricist.entity';
 
 @Entity({ name: 'tracks' })
 export class Track {
@@ -23,7 +27,16 @@ export class Track {
   title!: string;
 
   @Column({ default: 'Unknown Artist' })
-  artist!: string;
+  artist!: string; // Legacy string artist (can be deprecated later)
+
+  @ManyToOne(() => Singer, (singer) => singer.tracks, { nullable: true, onDelete: 'SET NULL' })
+  singer!: Singer | null;
+
+  @ManyToOne(() => Artist, (artist) => artist.tracks, { nullable: true, onDelete: 'SET NULL' })
+  artistRelation!: Artist | null;
+
+  @ManyToOne(() => Lyricist, (lyricist) => lyricist.tracks, { nullable: true, onDelete: 'SET NULL' })
+  lyricist!: Lyricist | null;
 
   @Column({ default: 'Local Library' })
   album!: string;
@@ -47,7 +60,10 @@ export class Track {
   streamUrl!: string | null;
 
   @Column({ type: 'varchar', length: 500, nullable: true })
-  coverUrl!: string | null;
+  coverUrl!: string | null; // This will now just store the filename
+
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  coverName!: string | null; // Also store just filename, eventually replacing coverUrl
 
   @Column({ type: 'varchar', length: 255, nullable: true, unique: true })
   localFileName!: string | null;

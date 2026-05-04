@@ -381,6 +381,19 @@ export class AuthService {
     };
   }
 
+  async checkEmailAvailability(email: string) {
+    if (!email?.trim()) {
+      return { available: true };
+    }
+    const normalized = email.trim().toLowerCase();
+    const user = await this.usersRepository.findOne({
+      where: { email: normalized },
+    });
+    // Consider email taken only if a user exists with a password (fully registered)
+    const taken = Boolean(user?.passwordHash);
+    return { available: !taken };
+  }
+
   private async buildAuthResponse(user: User, message: string) {
     return {
       message,

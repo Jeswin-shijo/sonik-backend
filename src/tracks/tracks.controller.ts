@@ -2,12 +2,14 @@ import {
   BadRequestException,
   Body,
   Controller,
-  Delete,
   Get,
+  Post,
+  Patch,
+  Delete,
   Headers,
   NotFoundException,
   Param,
-  Post,
+  Query,
   Req,
   Res,
   UploadedFiles,
@@ -25,7 +27,8 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { UploadTrackDto } from './dto/upload-track.dto';
 import { TracksService } from './tracks.service';
 
-const audioMimeTypes = [
+const mediaMimeTypes = [
+  // Audio
   'audio/mpeg',
   'audio/mp3',
   'audio/mp4',
@@ -36,6 +39,18 @@ const audioMimeTypes = [
   'audio/ogg',
   'audio/wav',
   'audio/x-wav',
+  'audio/aac',
+  'audio/webm',
+  // Video (audio will be extracted)
+  'video/mp4',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/x-matroska',
+  'video/webm',
+  'video/mpeg',
+  'video/3gpp',
+  'video/x-ms-wmv',
+  'video/avi',
 ];
 
 const imageMimeTypes = [
@@ -56,8 +71,14 @@ export class TracksController {
   constructor(private readonly tracksService: TracksService) {}
 
   @Get()
-  listTracks() {
-    return this.tracksService.listTracks();
+  listTracks(
+    @Query('offset') offset?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.tracksService.listTracks(
+      offset ? parseInt(offset, 10) : 0,
+      limit ? parseInt(limit, 10) : undefined,
+    );
   }
 
   @Get('artists')
@@ -205,14 +226,14 @@ export class TracksController {
           },
         }),
         limits: {
-          fileSize: 50 * 1024 * 1024,
+          fileSize: 500 * 1024 * 1024,
         },
         fileFilter: (_req, file, callback) => {
           if (file.fieldname === 'audio') {
-            if (!audioMimeTypes.includes(file.mimetype)) {
+            if (!mediaMimeTypes.includes(file.mimetype)) {
               return callback(
                 new BadRequestException(
-                  `Unsupported audio type: ${file.mimetype}`,
+                  `Unsupported media type: ${file.mimetype}`,
                 ),
                 false,
               );
@@ -238,10 +259,62 @@ export class TracksController {
     @Body() body: UploadTrackDto,
   ) {
     const audioFile = files.audio?.[0];
-    if (!audioFile) {
-      throw new BadRequestException('Audio file is required.');
-    }
     return this.tracksService.uploadTrack(body, audioFile, files.cover?.[0]);
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Patch('admin/:id')
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'audio', maxCount: 1 },
+        { name: 'cover', maxCount: 1 },
+      ],
+      {
+        storage: diskStorage({
+          destination: (_req, file, callback) => {
+            const subdir = file.fieldname === 'cover' ? 'covers' : 'tracks';
+            callback(null, join(process.cwd(), 'uploads', subdir));
+          },
+          filename: (_req, file, callback) => {
+            callback(null, uniqueFileName(file.originalname));
+          },
+        }),
+        limits: {
+          fileSize: 500 * 1024 * 1024,
+        },
+        fileFilter: (_req, file, callback) => {
+          if (file.fieldname === 'audio') {
+            if (!mediaMimeTypes.includes(file.mimetype)) {
+              return callback(
+                new BadRequestException(
+                  `Unsupported media type: ${file.mimetype}`,
+                ),
+                false,
+              );
+            }
+          } else if (file.fieldname === 'cover') {
+            if (!imageMimeTypes.includes(file.mimetype)) {
+              return callback(
+                new BadRequestException(
+                  `Unsupported cover image type: ${file.mimetype}`,
+                ),
+                false,
+              );
+            }
+          }
+          callback(null, true);
+        },
+      },
+    ),
+  )
+  updateTrack(
+    @Param('id') id: string,
+    @UploadedFiles()
+    files: { audio?: Express.Multer.File[]; cover?: Express.Multer.File[] },
+    @Body() body: Partial<UploadTrackDto>,
+  ) {
+    return this.tracksService.updateTrack(id, body, files.audio?.[0], files.cover?.[0]);
   }
 
   @UseGuards(JwtAuthGuard, AdminGuard)

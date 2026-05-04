@@ -11,8 +11,12 @@ import { QueueItem } from './entities/QueueItem.entity';
 import { RecentPlay } from './entities/RecentPlay.entity';
 import { Track } from './entities/Track.entity';
 import { User } from './entities/User.entity';
+import { Singer } from './entities/Singer.entity';
+import { Artist } from './entities/Artist.entity';
+import { Lyricist } from './entities/Lyricist.entity';
 import { PlaylistsModule } from './playlists/playlists.module';
 import { TracksModule } from './tracks/tracks.module';
+import { PeopleModule } from './people/people.module';
 
 const isTestEnvironment = process.env.NODE_ENV === 'test';
 
@@ -36,6 +40,9 @@ const databaseImports = isTestEnvironment
             FavoriteTrack,
             RecentPlay,
             QueueItem,
+            Singer,
+            Artist,
+            Lyricist,
           ],
           synchronize:
             configService.get<string>('DB_SYNCHRONIZE', 'true') === 'true',
@@ -46,7 +53,7 @@ const databaseImports = isTestEnvironment
 
 const featureModules = isTestEnvironment
   ? []
-  : [AuthModule, TracksModule, PlaylistsModule];
+  : [AuthModule, TracksModule, PlaylistsModule, PeopleModule];
 
 @Module({
   imports: [

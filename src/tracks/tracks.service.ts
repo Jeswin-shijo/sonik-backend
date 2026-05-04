@@ -16,6 +16,10 @@ import { Track } from '../entities/Track.entity';
 import { User } from '../entities/User.entity';
 import { UploadTrackDto } from './dto/upload-track.dto';
 import { unlinkSync } from 'fs';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 export type PlayerTrack = {
   id: string;
@@ -82,11 +86,13 @@ export class TracksService implements OnModuleInit {
     await this.seedLocalTracks();
   }
 
-  async listTracks() {
-    const tracks = await this.getActiveTracks();
+  async listTracks(offset = 0, limit?: number) {
+    const tracks = await this.getActiveTracks(offset, limit);
 
     return {
-      tracks: tracks.map((track, index) => this.serializeTrack(track, index)),
+      tracks: tracks.map((track, index) =>
+        this.serializeTrack(track, index + offset),
+      ),
     };
   }
 
@@ -251,11 +257,7 @@ export class TracksService implements OnModuleInit {
     };
   }
 
-  async addToQueue(
-    userId: number,
-    trackId: string,
-    mode: QueueMode = 'end',
-  ) {
+  async addToQueue(userId: number, trackId: string, mode: QueueMode = 'end') {
     const track = await this.getTrackById(trackId);
 
     if (!track) {
@@ -343,36 +345,191 @@ export class TracksService implements OnModuleInit {
 
   async uploadTrack(
     metadata: UploadTrackDto,
-    audioFile: Express.Multer.File,
+    audioFile: Express.Multer.File | undefined,
     coverFile: Express.Multer.File | undefined,
   ) {
-    const storageKey = `local:${Buffer.from(audioFile.filename).toString('base64url')}`;
-    const localFilePath = join('uploads', 'tracks', audioFile.filename);
-    const coverUrl = coverFile
-      ? `/uploads/covers/${coverFile.filename}`
-      : null;
+    const providedAudioName = metadata.audioFileName?.trim() || null;
+    const providedCoverName = metadata.coverImageName?.trim() || null;
 
-    const track = this.tracksRepository.create({
-      storageKey,
+    const finalAudioFileName =
+      audioFile?.filename ||
+      providedAudioName ||
+      `draft-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+    const storageKey = `local:${Buffer.from(finalAudioFileName).toString('base64url')}`;
+
+    const isExternalUrl =
+      providedAudioName?.startsWith('http://') ||
+      providedAudioName?.startsWith('https://');
+
+    let localFilePath: any = null;
+    let streamUrl: string | null = null;
+    let source: 'local' | 'remote' = 'local';
+    let fileSizeBytes = audioFile?.size || 0;
+    let fileMimeType = audioFile?.mimetype || 'audio/mpeg';
+
+    if (audioFile) {
+      localFilePath = join('uploads', 'tracks', audioFile.filename);
+    } else if (providedAudioName) {
+      if (isExternalUrl) {
+        streamUrl = providedAudioName;
+        source = 'remote';
+      } else {
+        localFilePath = join('uploads', 'tracks', providedAudioName);
+        // Read actual file stats when referencing an existing file by name
+        const absolutePath = join(
+          process.cwd(),
+          'uploads',
+          'tracks',
+          providedAudioName,
+        );
+        if (existsSync(absolutePath)) {
+          fileSizeBytes = statSync(absolutePath).size;
+          fileMimeType = this.getMimeType(extname(providedAudioName));
+        }
+      }
+    }
+
+    const coverUrl = coverFile ? coverFile.filename : providedCoverName;
+    const finalStorageKey = isExternalUrl
+      ? `remote:${Buffer.from(providedAudioName!).toString('base64url')}`
+      : storageKey;
+
+    // Check for existing track (may have been deactivated) by storageKey or localFileName
+    const existingTrack =
+      (await this.tracksRepository.findOne({
+        where: { storageKey: finalStorageKey },
+      })) ??
+      (providedAudioName && !isExternalUrl
+        ? await this.tracksRepository.findOne({
+            where: { localFileName: providedAudioName },
+          })
+        : null);
+
+    const trackData = {
+      storageKey: finalStorageKey,
       title: metadata.title.trim(),
       artist: metadata.artist?.trim() || 'Unknown Artist',
+      singer: metadata.singerId ? { id: Number(metadata.singerId) } : null,
+      artistRelation: metadata.artistId
+        ? { id: Number(metadata.artistId) }
+        : null,
+      lyricist: metadata.lyricistId
+        ? { id: Number(metadata.lyricistId) }
+        : null,
       album: metadata.album?.trim() || 'Local Library',
       genre: metadata.genre?.trim() || null,
       mood: metadata.mood?.trim() || 'Local',
-      source: 'local' as const,
-      streamUrl: null,
+      source,
+      streamUrl,
       coverUrl,
-      localFileName: audioFile.filename,
+      coverName: coverUrl,
+      localFileName:
+        audioFile?.filename || (!isExternalUrl ? providedAudioName : null),
       localFilePath,
-      mimeType: audioFile.mimetype || 'audio/mpeg',
-      sizeBytes: String(audioFile.size),
+      mimeType: fileMimeType,
+      sizeBytes: String(fileSizeBytes),
       isActive: true,
-    });
+    };
 
-    const saved = await this.tracksRepository.save(track);
+    if (audioFile) {
+      // Convert non-OGG media files (including video) to OGG
+      const converted = await this.convertToOggIfNeeded(audioFile);
+      if (converted) {
+        localFilePath = join('uploads', 'tracks', converted.filename);
+        fileSizeBytes = converted.size;
+        fileMimeType = 'audio/ogg';
+        trackData.localFilePath = localFilePath;
+        trackData.localFileName = converted.filename;
+        trackData.mimeType = fileMimeType;
+        trackData.sizeBytes = String(fileSizeBytes);
+        // Update storageKey based on new filename
+        const newStorageKey = `local:${Buffer.from(converted.filename).toString('base64url')}`;
+        trackData.storageKey = newStorageKey;
+      }
+    }
+
+    const saved = existingTrack
+      ? await this.tracksRepository.save({ ...existingTrack, ...trackData })
+      : await this.tracksRepository.save(
+          this.tracksRepository.create(trackData),
+        );
 
     return {
       message: 'Track uploaded successfully.',
+      track: this.serializeTrack(saved, 0),
+    };
+  }
+
+  async updateTrack(
+    trackId: string,
+    metadata: Partial<UploadTrackDto>,
+    audioFile?: Express.Multer.File,
+    coverFile?: Express.Multer.File,
+  ) {
+    const track = await this.getTrackById(trackId);
+    if (!track) throw new NotFoundException('Track not found.');
+
+    if (metadata.title) track.title = metadata.title.trim();
+    if (metadata.artist) track.artist = metadata.artist.trim();
+    if (metadata.singerId !== undefined)
+      track.singer = metadata.singerId
+        ? ({ id: Number(metadata.singerId) } as any)
+        : null;
+    if (metadata.artistId !== undefined)
+      track.artistRelation = metadata.artistId
+        ? ({ id: Number(metadata.artistId) } as any)
+        : null;
+    if (metadata.lyricistId !== undefined)
+      track.lyricist = metadata.lyricistId
+        ? ({ id: Number(metadata.lyricistId) } as any)
+        : null;
+    if (metadata.album) track.album = metadata.album.trim();
+    if (metadata.genre !== undefined)
+      track.genre = metadata.genre?.trim() || null;
+    if (metadata.mood !== undefined)
+      track.mood = metadata.mood?.trim() || 'Local';
+
+    if (metadata.audioFileName !== undefined && !audioFile) {
+      const audioName = metadata.audioFileName?.trim() || null;
+      const isExt =
+        audioName?.startsWith('http://') || audioName?.startsWith('https://');
+
+      if (isExt) {
+        track.source = 'remote';
+        track.streamUrl = audioName;
+        track.localFileName = null;
+        track.localFilePath = null;
+      } else {
+        track.source = 'local';
+        track.streamUrl = null;
+        track.localFileName = audioName;
+        track.localFilePath = audioName
+          ? join('uploads', 'tracks', audioName)
+          : null;
+      }
+    }
+
+    if (metadata.coverImageName !== undefined && !coverFile) {
+      track.coverUrl = metadata.coverImageName?.trim() || null;
+      track.coverName = metadata.coverImageName?.trim() || null;
+    }
+
+    if (audioFile) {
+      track.localFileName = audioFile.filename;
+      track.localFilePath = join('uploads', 'tracks', audioFile.filename);
+      track.mimeType = audioFile.mimetype || 'audio/mpeg';
+      track.sizeBytes = String(audioFile.size);
+      track.storageKey = `local:${Buffer.from(audioFile.filename).toString('base64url')}`;
+    }
+
+    if (coverFile) {
+      track.coverUrl = coverFile.filename;
+      track.coverName = coverFile.filename;
+    }
+
+    const saved = await this.tracksRepository.save(track);
+    return {
+      message: 'Track updated successfully.',
       track: this.serializeTrack(saved, 0),
     };
   }
@@ -412,7 +569,8 @@ export class TracksService implements OnModuleInit {
       throw new InternalServerErrorException('Track file is missing.');
     }
 
-    const fileSize = Number(track.sizeBytes);
+    const storedSize = Number(track.sizeBytes);
+    const fileSize = storedSize > 0 ? storedSize : statSync(filePath).size;
 
     if (!range) {
       response.writeHead(200, {
@@ -437,13 +595,19 @@ export class TracksService implements OnModuleInit {
     return createReadStream(filePath, { start, end }).pipe(response);
   }
 
-  private getActiveTracks() {
-    return this.tracksRepository.find({
+  private getActiveTracks(offset = 0, limit?: number) {
+    const options: any = {
       where: { isActive: true },
+      relations: ['singer', 'artistRelation', 'lyricist'],
       order: {
         title: 'ASC',
       },
-    });
+    };
+    if (limit !== undefined) {
+      options.skip = offset;
+      options.take = limit;
+    }
+    return this.tracksRepository.find(options);
   }
 
   private buildArtists(tracks: Track[]): LibraryArtist[] {
@@ -575,9 +739,13 @@ export class TracksService implements OnModuleInit {
 
   private async upsertLocalTrack(fileName: string) {
     const metadata = this.readLocalTrackMetadata(fileName);
-    const existingTrack = await this.tracksRepository.findOne({
-      where: { localFileName: fileName },
-    });
+    const existingTrack =
+      (await this.tracksRepository.findOne({
+        where: { localFileName: fileName },
+      })) ??
+      (await this.tracksRepository.findOne({
+        where: { storageKey: metadata.storageKey },
+      }));
 
     if (existingTrack) {
       await this.tracksRepository.save({
@@ -615,6 +783,7 @@ export class TracksService implements OnModuleInit {
       source: 'local' as const,
       streamUrl: null,
       coverUrl: null,
+      coverName: null,
       localFileName: fileName,
       localFilePath: join('uploads', 'tracks', fileName),
       mimeType: this.getMimeType(parsed.ext),
@@ -623,18 +792,33 @@ export class TracksService implements OnModuleInit {
     };
   }
 
-  private serializeTrack(track: Track, index: number): PlayerTrack {
+  private serializeTrack(track: Track, index: number): any {
+    let finalCoverUrl = track.coverUrl;
+    if (finalCoverUrl && !finalCoverUrl.includes('/')) {
+      finalCoverUrl = `/uploads/covers/${finalCoverUrl}`;
+    }
+
     return {
       id: String(track.id),
       title: track.title,
-      artist: track.artist,
+      artist: track.artistRelation
+        ? (track.artistRelation as any).name
+        : track.artist,
       album: track.album,
       duration: track.duration ?? '--:--',
       streamUrl: track.streamUrl ?? `/tracks/${track.id}/stream`,
       coverClass: coverClasses[index % coverClasses.length],
-      coverUrl: track.coverUrl,
+      coverUrl: finalCoverUrl,
       mood: track.mood,
       plays: track.playCount ? `${track.playCount}` : 'Local',
+      singerId: track.singer ? String((track.singer as any).id) : '',
+      artistId: track.artistRelation
+        ? String((track.artistRelation as any).id)
+        : '',
+      lyricistId: track.lyricist ? String((track.lyricist as any).id) : '',
+      genre: track.genre || '',
+      localFileName: track.localFileName || '',
+      coverName: track.coverName || '',
     };
   }
 
@@ -642,6 +826,51 @@ export class TracksService implements OnModuleInit {
     const match = title.match(/\(From (.+)\)/i);
 
     return match?.[1] ?? 'Local Library';
+  }
+
+  /**
+   * Convert uploaded media files (audio/video) to OGG format using FFmpeg.
+   * Returns null if the file is already OGG and no conversion is needed.
+   */
+  private async convertToOggIfNeeded(
+    audioFile: Express.Multer.File,
+  ): Promise<{ filename: string; size: number } | null> {
+    const ext = extname(audioFile.filename).toLowerCase();
+    if (ext === '.ogg') {
+      return null; // already OGG, no conversion needed
+    }
+
+    const inputPath = join(process.cwd(), 'uploads', 'tracks', audioFile.filename);
+    const baseName = parse(audioFile.filename).name;
+    const oggFilename = `${baseName}.ogg`;
+    const outputPath = join(process.cwd(), 'uploads', 'tracks', oggFilename);
+
+    try {
+      await execFileAsync('ffmpeg', [
+        '-i', inputPath,
+        '-vn',              // strip video stream
+        '-codec:a', 'libvorbis',
+        '-q:a', '6',       // quality level 6 (~192kbps VBR)
+        '-y',               // overwrite output
+        outputPath,
+      ]);
+
+      // Remove the original uploaded file
+      try {
+        if (existsSync(inputPath)) {
+          unlinkSync(inputPath);
+        }
+      } catch {
+        // best-effort cleanup
+      }
+
+      const stats = statSync(outputPath);
+      return { filename: oggFilename, size: stats.size };
+    } catch (error) {
+      console.error('FFmpeg conversion failed:', error);
+      // If conversion fails, keep the original file as-is
+      return null;
+    }
   }
 
   private getMimeType(extension: string) {

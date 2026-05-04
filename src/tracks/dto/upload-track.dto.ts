@@ -13,6 +13,18 @@ export class UploadTrackDto {
 
   @IsOptional()
   @IsString()
+  singerId?: string;
+
+  @IsOptional()
+  @IsString()
+  artistId?: string;
+
+  @IsOptional()
+  @IsString()
+  lyricistId?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(255)
   album?: string;
 
@@ -25,4 +37,12 @@ export class UploadTrackDto {
   @IsString()
   @MaxLength(60)
   mood?: string;
+
+  @IsOptional()
+  @IsString()
+  audioFileName?: string;
+
+  @IsOptional()
+  @IsString()
+  coverImageName?: string;
 }
