@@ -21,6 +21,8 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { SendOtpDto } from './dto/send-otp.dto';
 import { VerifyOtpSignupDto } from './dto/verify-otp-signup.dto';
 import { VerifyOtpResetPasswordDto } from './dto/verify-otp-reset-password.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { EmailService } from './email.service';
 
 type AuthProvider = 'local' | 'google' | 'hybrid';
@@ -144,12 +146,16 @@ export class AuthService {
         resetPasswordExpiresAt: null,
         otpCode: null,
         otpExpiresAt: null,
+        avatarUrl: payload.picture || null,
       });
     } else {
       user.googleId = payload.sub;
       user.profileName = user.profileName || profileName;
       user.authProvider = user.passwordHash ? 'hybrid' : 'google';
       user.role = this.resolveRole(user.email);
+      if (!user.avatarUrl && payload.picture) {
+        user.avatarUrl = payload.picture;
+      }
     }
 
     const savedUser = await this.usersRepository.save(user);
@@ -381,6 +387,75 @@ export class AuthService {
     };
   }
 
+  async updateProfile(userId: number, dto: UpdateProfileDto) {
+    const user = await this.usersRepository.findOne({ where: { id: userId } });
+
+    if (!user) {
+      throw new NotFoundException('User account not found.');
+    }
+
+    if (dto.profileName !== undefined) {
+      user.profileName = dto.profileName.trim();
+    }
+    if (dto.birthday !== undefined) {
+      user.birthday = dto.birthday;
+    }
+    if (dto.language !== undefined) {
+      user.language = dto.language;
+    }
+
+    const savedUser = await this.usersRepository.save(user);
+
+    return {
+      message: 'Profile updated successfully.',
+      user: this.serializeUser(savedUser),
+    };
+  }
+
+  async changePassword(userId: number, dto: ChangePasswordDto) {
+    const user = await this.usersRepository.findOne({ where: { id: userId } });
+
+    if (!user) {
+      throw new NotFoundException('User account not found.');
+    }
+
+    if (!user.passwordHash) {
+      throw new BadRequestException(
+        'This account uses Google sign-in. Set a password via forgot password first.',
+      );
+    }
+
+    const isCurrentValid = await compare(dto.currentPassword, user.passwordHash);
+
+    if (!isCurrentValid) {
+      throw new UnauthorizedException('Current password is incorrect.');
+    }
+
+    user.passwordHash = await this.hashPassword(dto.newPassword);
+    const savedUser = await this.usersRepository.save(user);
+
+    return {
+      message: 'Password changed successfully.',
+      user: this.serializeUser(savedUser),
+    };
+  }
+
+  async uploadAvatar(userId: number, filename: string) {
+    const user = await this.usersRepository.findOne({ where: { id: userId } });
+
+    if (!user) {
+      throw new NotFoundException('User account not found.');
+    }
+
+    user.avatarUrl = filename;
+    const savedUser = await this.usersRepository.save(user);
+
+    return {
+      message: 'Avatar updated successfully.',
+      user: this.serializeUser(savedUser),
+    };
+  }
+
   async checkEmailAvailability(email: string) {
     if (!email?.trim()) {
       return { available: true };
@@ -411,6 +486,9 @@ export class AuthService {
       authProvider: user.authProvider,
       role: user.role,
       googleConnected: Boolean(user.googleId),
+      birthday: user.birthday ?? null,
+      language: user.language ?? 'en',
+      avatarUrl: user.avatarUrl ?? null,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };

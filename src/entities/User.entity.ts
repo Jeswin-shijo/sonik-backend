@@ -46,6 +46,15 @@ export class User {
   @Column({ type: 'datetime', nullable: true })
   otpExpiresAt!: Date | null;
 
+  @Column({ type: 'date', nullable: true })
+  birthday!: string | null;
+
+  @Column({ type: 'varchar', length: 10, default: 'en' })
+  language!: string;
+
+  @Column({ type: 'varchar', length: 512, nullable: true })
+  avatarUrl!: string | null;
+
   @OneToMany(() => Playlist, (playlist) => playlist.user)
   playlists!: Playlist[];
 
