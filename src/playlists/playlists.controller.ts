@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Req,
   UseGuards,
@@ -40,6 +41,15 @@ export class PlaylistsController {
     @Req() request: AuthenticatedRequest,
   ) {
     return this.playlistsService.getPlaylist(request.user.sub, id);
+  }
+
+  @Patch(':id')
+  updatePlaylist(
+    @Param('id') id: string,
+    @Body() body: { name?: string; description?: string },
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.playlistsService.updatePlaylist(request.user.sub, id, body);
   }
 
   @Post(':id/tracks/:trackId')

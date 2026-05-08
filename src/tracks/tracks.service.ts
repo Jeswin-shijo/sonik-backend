@@ -142,6 +142,30 @@ export class TracksService implements OnModuleInit {
     };
   }
 
+  async searchTracks(query: string, offset = 0, limit = 30) {
+    const q = `%${query.trim().toLowerCase()}%`;
+
+    const tracks = await this.tracksRepository
+      .createQueryBuilder('track')
+      .leftJoinAndSelect('track.singer', 'singer')
+      .leftJoinAndSelect('track.artistRelation', 'artistRelation')
+      .leftJoinAndSelect('track.lyricist', 'lyricist')
+      .where('track.isActive = :isActive', { isActive: true })
+      .andWhere(
+        '(LOWER(track.title) LIKE :q OR LOWER(track.artist) LIKE :q OR LOWER(track.album) LIKE :q OR LOWER(track.mood) LIKE :q OR LOWER(track.genre) LIKE :q)',
+        { q },
+      )
+      .orderBy('track.playCount', 'DESC')
+      .addOrderBy('track.title', 'ASC')
+      .skip(offset)
+      .take(limit)
+      .getMany();
+
+    return {
+      tracks: tracks.map((track, index) => this.serializeTrack(track, index + offset)),
+    };
+  }
+
   async getTrackById(id: string) {
     return this.tracksRepository.findOne({
       where: {

@@ -26,7 +26,11 @@ export class PlaylistsService {
       where: { user: { id: userId } },
       relations: {
         playlistTracks: {
-          track: true,
+          track: {
+            singer: true,
+            artistRelation: true,
+            lyricist: true,
+          },
         },
       },
       order: {
@@ -75,6 +79,24 @@ export class PlaylistsService {
     return {
       playlist: this.serializePlaylist(playlist),
     };
+  }
+
+  async updatePlaylist(
+    userId: number,
+    playlistId: string,
+    body: { name?: string; description?: string },
+  ) {
+    const playlist = await this.findOwnedPlaylist(userId, playlistId);
+
+    if (body.name?.trim()) {
+      playlist.name = body.name.trim();
+    }
+    if (body.description !== undefined) {
+      playlist.description = body.description?.trim() || null;
+    }
+
+    await this.playlistsRepository.save(playlist);
+    return this.getPlaylist(userId, playlistId);
   }
 
   async addTrack(userId: number, playlistId: string, trackId: string) {
@@ -140,7 +162,11 @@ export class PlaylistsService {
       },
       relations: {
         playlistTracks: {
-          track: true,
+          track: {
+            singer: true,
+            artistRelation: true,
+            lyricist: true,
+          },
         },
       },
       order: {
@@ -167,25 +193,29 @@ export class PlaylistsService {
       name: playlist.name,
       description: playlist.description,
       trackCount: playlistTracks.length,
-      tracks: playlistTracks.map((playlistTrack, index) => ({
-        id: String(playlistTrack.track.id),
-        title: playlistTrack.track.title,
-        artist: playlistTrack.track.artist,
-        album: playlistTrack.track.album,
-        duration: playlistTrack.track.duration ?? '--:--',
-        plays: playlistTrack.track.playCount
-          ? `${playlistTrack.track.playCount}`
-          : 'Local',
-        mood: playlistTrack.track.mood,
-        coverClass: [
-          'cover-neon',
-          'cover-coast',
-          'cover-velvet',
-          'cover-summer',
-          'cover-blue',
-        ][index % 5],
-        streamUrl: playlistTrack.track.streamUrl ?? `/tracks/${playlistTrack.track.id}/stream`,
-      })),
+      tracks: playlistTracks.map((playlistTrack, index) => {
+        const track = playlistTrack.track;
+        let coverUrl = track.coverUrl ?? null;
+        if (coverUrl && !coverUrl.includes('/')) {
+          coverUrl = `/uploads/covers/${coverUrl}`;
+        }
+        return {
+          id: String(track.id),
+          title: track.title,
+          artist: track.artistRelation ? (track.artistRelation as any).name : track.artist,
+          album: track.album,
+          duration: track.duration ?? '--:--',
+          plays: track.playCount ? `${track.playCount}` : 'Local',
+          mood: track.mood,
+          coverClass: ['cover-neon', 'cover-coast', 'cover-velvet', 'cover-summer', 'cover-blue'][index % 5],
+          coverUrl,
+          streamUrl: track.streamUrl ?? `/tracks/${track.id}/stream`,
+          singerId: track.singer ? String((track.singer as any).id ?? '') : '',
+          artistId: track.artistRelation ? String((track.artistRelation as any).id ?? '') : '',
+          lyricistId: track.lyricist ? String((track.lyricist as any).id ?? '') : '',
+          genre: track.genre ?? '',
+        };
+      }),
       createdAt: playlist.createdAt,
       updatedAt: playlist.updatedAt,
     };

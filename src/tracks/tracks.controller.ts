@@ -101,6 +101,20 @@ export class TracksController {
     return this.tracksService.getAlbumById(id);
   }
 
+  @Get('search')
+  searchTracks(
+    @Query('q') q?: string,
+    @Query('offset') offset?: string,
+    @Query('limit') limit?: string,
+  ) {
+    if (!q?.trim()) return Promise.resolve({ tracks: [] });
+    return this.tracksService.searchTracks(
+      q,
+      offset ? parseInt(offset, 10) : 0,
+      limit ? parseInt(limit, 10) : 30,
+    );
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get('favorites/me')
   listMyFavorites(@Req() request: AuthenticatedRequest) {
