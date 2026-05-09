@@ -203,6 +203,80 @@ export class EmailService {
     }
   }
 
+  async sendLoginNotificationEmail(to: string, profileName: string): Promise<boolean> {
+    const transporter = this.getTransporter();
+    if (!transporter) return false;
+
+    const name = profileName || 'there';
+    const now = new Date().toUTCString();
+    const html = this.baseHtml('New sign-in to your account', `
+      <p style="margin:0 0 16px;color:#a8a8b3;line-height:1.6;">
+        Hi ${name}, we noticed a new sign-in to your Sonik account.
+      </p>
+      <div style="margin:24px 0;padding:16px 20px;background:#0c0c12;border:1px solid #26262f;border-radius:14px;">
+        <p style="margin:0 0 6px;font-size:13px;color:#8a8a96;text-transform:uppercase;letter-spacing:0.12em;">Signed in at</p>
+        <p style="margin:0 0 16px;font-size:14px;font-weight:600;color:#f5f5f8;">${now}</p>
+        <p style="margin:0;font-size:13px;color:#8a8a96;">If this was not you, reset your password immediately and contact support.</p>
+      </div>
+      <p style="margin:0;color:#a8a8b3;line-height:1.6;font-size:14px;">
+        If this was you, no further action is needed.
+      </p>
+    `);
+
+    const text = `Hi ${name},\n\nA new sign-in to your Sonik account was detected at ${now}.\n\nIf this was not you, reset your password immediately.\n\n— The Sonik team`;
+
+    try {
+      await transporter.sendMail({
+        from: `"Sonik" <${this.getFromAddress()}>`,
+        to,
+        subject: 'New sign-in to your Sonik account',
+        text,
+        html,
+      });
+      return true;
+    } catch (error) {
+      this.logger.error(`Failed to send login notification email to ${to}: ${(error as Error).message}`);
+      return false;
+    }
+  }
+
+  async sendAccountDeletedEmail(to: string, profileName: string): Promise<boolean> {
+    const transporter = this.getTransporter();
+    if (!transporter) return false;
+
+    const name = profileName || 'there';
+    const now = new Date().toUTCString();
+    const html = this.baseHtml('Your Sonik account has been deleted', `
+      <p style="margin:0 0 16px;color:#a8a8b3;line-height:1.6;">
+        Hi ${name}, your Sonik account and all associated data have been permanently deleted as requested.
+      </p>
+      <div style="margin:24px 0;padding:16px 20px;background:#0c0c12;border:1px solid #26262f;border-radius:14px;">
+        <p style="margin:0 0 6px;font-size:13px;color:#8a8a96;text-transform:uppercase;letter-spacing:0.12em;">Deleted at</p>
+        <p style="margin:0 0 16px;font-size:14px;font-weight:600;color:#f5f5f8;">${now}</p>
+        <p style="margin:0;font-size:13px;color:#8a8a96;">Your library, playlists, and all personal data have been removed from our servers.</p>
+      </div>
+      <p style="margin:0;color:#a8a8b3;line-height:1.6;font-size:14px;">
+        If you did not request this, please contact our support team immediately.
+      </p>
+    `);
+
+    const text = `Hi ${name},\n\nYour Sonik account was permanently deleted at ${now}.\n\nAll your data has been removed. If you did not request this, contact support immediately.\n\n— The Sonik team`;
+
+    try {
+      await transporter.sendMail({
+        from: `"Sonik" <${this.getFromAddress()}>`,
+        to,
+        subject: 'Your Sonik account has been deleted',
+        text,
+        html,
+      });
+      return true;
+    } catch (error) {
+      this.logger.error(`Failed to send account deleted email to ${to}: ${(error as Error).message}`);
+      return false;
+    }
+  }
+
   async sendPasswordChangedEmail(to: string, profileName: string): Promise<boolean> {
     const transporter = this.getTransporter();
     if (!transporter) return false;

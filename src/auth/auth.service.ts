@@ -96,6 +96,8 @@ export class AuthService {
       await this.usersRepository.save(user);
     }
 
+    void this.emailService.sendLoginNotificationEmail(user.email, user.profileName);
+
     return this.buildAuthResponse(user, 'Signed in successfully.');
   }
 
@@ -158,7 +160,14 @@ export class AuthService {
       }
     }
 
+    const isNewUser = !user.id;
     const savedUser = await this.usersRepository.save(user);
+
+    if (isNewUser) {
+      void this.emailService.sendWelcomeEmail(savedUser.email, savedUser.profileName);
+    } else {
+      void this.emailService.sendLoginNotificationEmail(savedUser.email, savedUser.profileName);
+    }
 
     return this.buildAuthResponse(savedUser, 'Google account connected.');
   }
@@ -371,8 +380,11 @@ export class AuthService {
       throw new NotFoundException('User account not found.');
     }
 
-    // Delete related data first (cascade should handle this, but being explicit)
+    const { email, profileName } = user;
+
     await this.usersRepository.delete(userId);
+
+    void this.emailService.sendAccountDeletedEmail(email, profileName);
 
     return {
       message: 'Account and all related data have been deleted successfully.',
