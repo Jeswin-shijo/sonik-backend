@@ -15,6 +15,7 @@ import { RecentPlay } from '../entities/RecentPlay.entity';
 import { Track } from '../entities/Track.entity';
 import { User } from '../entities/User.entity';
 import { UploadTrackDto } from './dto/upload-track.dto';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { unlinkSync } from 'fs';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -80,6 +81,7 @@ export class TracksService implements OnModuleInit {
     private readonly recentPlaysRepository: Repository<RecentPlay>,
     @InjectRepository(QueueItem)
     private readonly queueItemsRepository: Repository<QueueItem>,
+    private readonly realtime: RealtimeGateway,
   ) {}
 
   async onModuleInit() {
@@ -220,6 +222,7 @@ export class TracksService implements OnModuleInit {
       );
     }
 
+    this.realtime.emit({ type: 'track:liked', trackId, userId });
     return {
       message: 'Track added to favorites.',
       track: this.serializeTrack(track, 0),
@@ -234,6 +237,7 @@ export class TracksService implements OnModuleInit {
       .andWhere('trackId = :trackId', { trackId: Number(trackId) })
       .execute();
 
+    this.realtime.emit({ type: 'track:unliked', trackId, userId });
     return {
       message: 'Track removed from favorites.',
     };
@@ -442,6 +446,7 @@ export class TracksService implements OnModuleInit {
         : null,
       album: metadata.album?.trim() || 'Local Library',
       genre: metadata.genre?.trim() || null,
+      language: metadata.language?.trim() || null,
       mood: metadata.mood?.trim() || 'Local',
       source,
       streamUrl,
@@ -478,9 +483,12 @@ export class TracksService implements OnModuleInit {
           this.tracksRepository.create(trackData),
         );
 
+    const serialized = this.serializeTrack(saved, 0);
+    this.realtime.emit({ type: 'track:added', track: serialized as Record<string, unknown> });
+    this.realtime.emit({ type: 'notification', message: `New track added: ${serialized.title}`, kind: 'success' });
     return {
       message: 'Track uploaded successfully.',
-      track: this.serializeTrack(saved, 0),
+      track: serialized,
     };
   }
 
@@ -510,6 +518,8 @@ export class TracksService implements OnModuleInit {
     if (metadata.album) track.album = metadata.album.trim();
     if (metadata.genre !== undefined)
       track.genre = metadata.genre?.trim() || null;
+    if (metadata.language !== undefined)
+      track.language = metadata.language?.trim() || null;
     if (metadata.mood !== undefined)
       track.mood = metadata.mood?.trim() || 'Local';
 
@@ -552,9 +562,11 @@ export class TracksService implements OnModuleInit {
     }
 
     const saved = await this.tracksRepository.save(track);
+    const serialized = this.serializeTrack(saved, 0);
+    this.realtime.emit({ type: 'track:updated', track: serialized as Record<string, unknown> });
     return {
       message: 'Track updated successfully.',
-      track: this.serializeTrack(saved, 0),
+      track: serialized,
     };
   }
 
@@ -581,6 +593,8 @@ export class TracksService implements OnModuleInit {
       }
     }
 
+    this.realtime.emit({ type: 'track:deleted', trackId });
+    this.realtime.emit({ type: 'notification', message: `Track "${track.title}" was removed`, kind: 'warning' });
     return { message: 'Track removed.' };
   }
 
@@ -707,6 +721,35 @@ export class TracksService implements OnModuleInit {
         tracks: album.tracks,
       }))
       .sort((first, second) => first.title.localeCompare(second.title));
+  }
+
+  async listLanguages() {
+    const tracks = await this.getActiveTracks();
+    return { languages: this.buildLanguages(tracks) };
+  }
+
+  async getLanguageById(id: string) {
+    const tracks = await this.getActiveTracks();
+    const language = this.buildLanguages(tracks).find((l) => l.id === id);
+    if (!language) throw new NotFoundException('Language not found.');
+    return language;
+  }
+
+  private buildLanguages(tracks: Track[]) {
+    const map = new Map<string, { id: string; name: string; tracks: PlayerTrack[] }>();
+
+    tracks.forEach((track, index) => {
+      if (!track.language?.trim()) return;
+      const name = track.language.trim();
+      const id = this.getCollectionId(name);
+      const lang = map.get(id) ?? { id, name, tracks: [] };
+      lang.tracks.push(this.serializeTrack(track, index));
+      map.set(id, lang);
+    });
+
+    return [...map.values()]
+      .map((l) => ({ id: l.id, name: l.name, trackCount: l.tracks.length, tracks: l.tracks }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   private getCollectionId(value: string) {
@@ -841,6 +884,7 @@ export class TracksService implements OnModuleInit {
         : '',
       lyricistId: track.lyricist ? String((track.lyricist as any).id) : '',
       genre: track.genre || '',
+      language: track.language || '',
       localFileName: track.localFileName || '',
       coverName: track.coverName || '',
     };

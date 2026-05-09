@@ -101,6 +101,16 @@ export class TracksController {
     return this.tracksService.getAlbumById(id);
   }
 
+  @Get('languages')
+  listLanguages() {
+    return this.tracksService.listLanguages();
+  }
+
+  @Get('languages/:id')
+  getLanguage(@Param('id') id: string) {
+    return this.tracksService.getLanguageById(id);
+  }
+
   @Get('search')
   searchTracks(
     @Query('q') q?: string,

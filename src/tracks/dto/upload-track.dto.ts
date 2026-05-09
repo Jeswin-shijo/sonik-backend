@@ -40,6 +40,11 @@ export class UploadTrackDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(80)
+  language?: string;
+
+  @IsOptional()
+  @IsString()
   audioFileName?: string;
 
   @IsOptional()

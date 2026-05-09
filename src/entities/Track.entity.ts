@@ -50,6 +50,9 @@ export class Track {
   @Column({ type: 'varchar', length: 120, nullable: true })
   genre!: string | null;
 
+  @Column({ type: 'varchar', length: 80, nullable: true })
+  language!: string | null;
+
   @Column({ default: 'Local' })
   mood!: string;
 

@@ -15,6 +15,7 @@ import { Singer } from './entities/Singer.entity';
 import { Artist } from './entities/Artist.entity';
 import { Lyricist } from './entities/Lyricist.entity';
 import { PlaylistsModule } from './playlists/playlists.module';
+import { RealtimeModule } from './realtime/realtime.module';
 import { TracksModule } from './tracks/tracks.module';
 import { PeopleModule } from './people/people.module';
 
@@ -53,7 +54,7 @@ const databaseImports = isTestEnvironment
 
 const featureModules = isTestEnvironment
   ? []
-  : [AuthModule, TracksModule, PlaylistsModule, PeopleModule];
+  : [AuthModule, TracksModule, PlaylistsModule, PeopleModule, RealtimeModule];
 
 @Module({
   imports: [
