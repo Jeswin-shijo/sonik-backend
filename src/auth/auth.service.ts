@@ -324,6 +324,8 @@ export class AuthService {
 
     const savedUser = await this.usersRepository.save(user);
 
+    void this.emailService.sendWelcomeEmail(savedUser.email, savedUser.profileName);
+
     return this.buildAuthResponse(savedUser, 'Account created successfully.');
   }
 
@@ -356,6 +358,8 @@ export class AuthService {
     user.authProvider = user.googleId ? 'hybrid' : 'local';
 
     const savedUser = await this.usersRepository.save(user);
+
+    void this.emailService.sendPasswordResetSuccessEmail(savedUser.email, savedUser.profileName);
 
     return this.buildAuthResponse(savedUser, 'Password updated successfully.');
   }
@@ -433,6 +437,8 @@ export class AuthService {
 
     user.passwordHash = await this.hashPassword(dto.newPassword);
     const savedUser = await this.usersRepository.save(user);
+
+    void this.emailService.sendPasswordChangedEmail(savedUser.email, savedUser.profileName);
 
     return {
       message: 'Password changed successfully.',
