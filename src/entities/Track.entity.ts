@@ -74,6 +74,12 @@ export class Track {
   @Column({ type: 'varchar', length: 500, nullable: true })
   localFilePath!: string | null;
 
+  @Column({ type: 'varchar', length: 500, nullable: true, default: null })
+  minioKey!: string | null;
+
+  @Column({ type: 'varchar', length: 500, nullable: true, default: null })
+  minioCoverKey!: string | null;
+
   @Column({ default: 'audio/mpeg' })
   mimeType!: string;
 

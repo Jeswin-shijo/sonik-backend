@@ -26,7 +26,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { EmailService } from './email.service';
 
 type AuthProvider = 'local' | 'google' | 'hybrid';
-type UserRole = 'user' | 'admin';
+type UserRole = 'user' | 'admin' | 'guest';
 
 type AuthTokenPayload = {
   sub: number;
@@ -485,6 +485,35 @@ export class AuthService {
     // Consider email taken only if a user exists with a password (fully registered)
     const taken = Boolean(user?.passwordHash);
     return { available: !taken };
+  }
+
+  async guestLogin() {
+    // Clean up guest accounts older than 24 hours
+    await this.usersRepository
+      .createQueryBuilder()
+      .delete()
+      .where('role = :role', { role: 'guest' })
+      .andWhere('createdAt < :cutoff', {
+        cutoff: new Date(Date.now() - 24 * 60 * 60 * 1000),
+      })
+      .execute();
+
+    const guestId = randomBytes(8).toString('hex');
+    const user = this.usersRepository.create({
+      email: `guest-${guestId}@sonik.guest`,
+      profileName: 'Guest',
+      passwordHash: null,
+      authProvider: 'local',
+      role: 'guest',
+      googleId: null,
+      resetPasswordTokenHash: null,
+      resetPasswordExpiresAt: null,
+      otpCode: null,
+      otpExpiresAt: null,
+    });
+
+    const savedUser = await this.usersRepository.save(user);
+    return this.buildAuthResponse(savedUser, 'Signed in as guest.');
   }
 
   private async buildAuthResponse(user: User, message: string) {

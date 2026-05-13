@@ -18,6 +18,7 @@ import { PlaylistsModule } from './playlists/playlists.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { TracksModule } from './tracks/tracks.module';
 import { PeopleModule } from './people/people.module';
+import { StorageModule } from './storage/storage.module';
 
 const isTestEnvironment = process.env.NODE_ENV === 'test';
 
@@ -54,7 +55,7 @@ const databaseImports = isTestEnvironment
 
 const featureModules = isTestEnvironment
   ? []
-  : [AuthModule, TracksModule, PlaylistsModule, PeopleModule, RealtimeModule];
+  : [StorageModule, AuthModule, TracksModule, PlaylistsModule, PeopleModule, RealtimeModule];
 
 @Module({
   imports: [

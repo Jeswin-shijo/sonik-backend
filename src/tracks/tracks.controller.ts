@@ -216,6 +216,14 @@ export class TracksController {
     return this.tracksService.recordRecentPlay(request.user.sub, id, body);
   }
 
+  @Get('covers/:filename')
+  streamCover(
+    @Param('filename') filename: string,
+    @Res() response: Response,
+  ) {
+    return this.tracksService.streamCover(filename, response);
+  }
+
   @Get(':id/stream')
   async streamTrack(
     @Param('id') id: string,

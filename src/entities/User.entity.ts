@@ -29,7 +29,7 @@ export class User {
   authProvider!: 'local' | 'google' | 'hybrid';
 
   @Column({ type: 'varchar', length: 20, default: 'user' })
-  role!: 'user' | 'admin';
+  role!: 'user' | 'admin' | 'guest';
 
   @Column({ type: 'varchar', length: 255, nullable: true, unique: true })
   googleId!: string | null;

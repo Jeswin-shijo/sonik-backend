@@ -5,7 +5,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { createReadStream, existsSync, readdirSync, statSync } from 'fs';
+import { createReadStream, existsSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { extname, join, parse } from 'path';
 import type { Response } from 'express';
 import { Repository } from 'typeorm';
@@ -16,7 +16,7 @@ import { Track } from '../entities/Track.entity';
 import { User } from '../entities/User.entity';
 import { UploadTrackDto } from './dto/upload-track.dto';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
-import { unlinkSync } from 'fs';
+import { MinioService } from '../storage/minio.service';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -82,6 +82,7 @@ export class TracksService implements OnModuleInit {
     @InjectRepository(QueueItem)
     private readonly queueItemsRepository: Repository<QueueItem>,
     private readonly realtime: RealtimeGateway,
+    private readonly minio: MinioService,
   ) {}
 
   async onModuleInit() {
@@ -417,6 +418,14 @@ export class TracksService implements OnModuleInit {
       }
     }
 
+    let minioCoverKey: string | null = null;
+    if (coverFile) {
+      minioCoverKey = `covers/${coverFile.filename}`;
+      const coverLocalPath = join(process.cwd(), 'uploads', 'covers', coverFile.filename);
+      await this.minio.upload(minioCoverKey, coverLocalPath, coverFile.mimetype);
+      try { unlinkSync(coverLocalPath); } catch { /* best-effort */ }
+    }
+
     const coverUrl = coverFile ? coverFile.filename : providedCoverName;
     const finalStorageKey = isExternalUrl
       ? `remote:${Buffer.from(providedAudioName!).toString('base64url')}`
@@ -450,8 +459,10 @@ export class TracksService implements OnModuleInit {
       mood: metadata.mood?.trim() || 'Local',
       source,
       streamUrl,
-      coverUrl,
-      coverName: coverUrl,
+      coverUrl: minioCoverKey ? null : coverUrl,
+      coverName: coverFile ? coverFile.filename : providedCoverName,
+      minioCoverKey,
+      minioKey: null as string | null,
       localFileName:
         audioFile?.filename || (!isExternalUrl ? providedAudioName : null),
       localFilePath,
@@ -461,20 +472,27 @@ export class TracksService implements OnModuleInit {
     };
 
     if (audioFile) {
-      // Convert non-OGG media files (including video) to OGG
       const converted = await this.convertToOggIfNeeded(audioFile);
+      const finalAudio = converted
+        ? { filename: converted.filename, size: converted.size, mimetype: 'audio/ogg' }
+        : { filename: audioFile.filename, size: audioFile.size, mimetype: audioFile.mimetype };
+
       if (converted) {
-        localFilePath = join('uploads', 'tracks', converted.filename);
         fileSizeBytes = converted.size;
         fileMimeType = 'audio/ogg';
-        trackData.localFilePath = localFilePath;
-        trackData.localFileName = converted.filename;
         trackData.mimeType = fileMimeType;
         trackData.sizeBytes = String(fileSizeBytes);
-        // Update storageKey based on new filename
-        const newStorageKey = `local:${Buffer.from(converted.filename).toString('base64url')}`;
-        trackData.storageKey = newStorageKey;
+        trackData.storageKey = `local:${Buffer.from(converted.filename).toString('base64url')}`;
       }
+
+      const audioLocalPath = join(process.cwd(), 'uploads', 'tracks', finalAudio.filename);
+      const minioKey = `tracks/${finalAudio.filename}`;
+      await this.minio.upload(minioKey, audioLocalPath, finalAudio.mimetype);
+      try { unlinkSync(audioLocalPath); } catch { /* best-effort */ }
+
+      trackData.minioKey = minioKey;
+      trackData.localFileName = null;
+      trackData.localFilePath = null;
     }
 
     const saved = existingTrack
@@ -549,15 +567,38 @@ export class TracksService implements OnModuleInit {
     }
 
     if (audioFile) {
-      track.localFileName = audioFile.filename;
-      track.localFilePath = join('uploads', 'tracks', audioFile.filename);
-      track.mimeType = audioFile.mimetype || 'audio/mpeg';
-      track.sizeBytes = String(audioFile.size);
-      track.storageKey = `local:${Buffer.from(audioFile.filename).toString('base64url')}`;
+      if (track.minioKey) {
+        try { await this.minio.deleteObject(track.minioKey); } catch { /* best-effort */ }
+      }
+
+      const converted = await this.convertToOggIfNeeded(audioFile);
+      const finalAudio = converted
+        ? { filename: converted.filename, size: converted.size, mimetype: 'audio/ogg' }
+        : { filename: audioFile.filename, size: audioFile.size, mimetype: audioFile.mimetype };
+
+      const audioLocalPath = join(process.cwd(), 'uploads', 'tracks', finalAudio.filename);
+      const minioKey = `tracks/${finalAudio.filename}`;
+      await this.minio.upload(minioKey, audioLocalPath, finalAudio.mimetype);
+      try { unlinkSync(audioLocalPath); } catch { /* best-effort */ }
+
+      track.minioKey = minioKey;
+      track.localFileName = null;
+      track.localFilePath = null;
+      track.mimeType = finalAudio.mimetype;
+      track.sizeBytes = String(finalAudio.size);
+      track.storageKey = `minio:${Buffer.from(minioKey).toString('base64url')}`;
     }
 
     if (coverFile) {
-      track.coverUrl = coverFile.filename;
+      if (track.minioCoverKey) {
+        try { await this.minio.deleteObject(track.minioCoverKey); } catch { /* best-effort */ }
+      }
+      const minioCoverKey = `covers/${coverFile.filename}`;
+      const coverLocalPath = join(process.cwd(), 'uploads', 'covers', coverFile.filename);
+      await this.minio.upload(minioCoverKey, coverLocalPath, coverFile.mimetype);
+      try { unlinkSync(coverLocalPath); } catch { /* best-effort */ }
+      track.minioCoverKey = minioCoverKey;
+      track.coverUrl = null;
       track.coverName = coverFile.filename;
     }
 
@@ -582,6 +623,13 @@ export class TracksService implements OnModuleInit {
     track.isActive = false;
     await this.tracksRepository.save(track);
 
+    if (track.minioKey) {
+      try { await this.minio.deleteObject(track.minioKey); } catch { /* best-effort */ }
+    }
+    if (track.minioCoverKey) {
+      try { await this.minio.deleteObject(track.minioCoverKey); } catch { /* best-effort */ }
+    }
+
     if (track.localFilePath) {
       const absolute = join(process.cwd(), track.localFilePath);
       try {
@@ -598,7 +646,11 @@ export class TracksService implements OnModuleInit {
     return { message: 'Track removed.' };
   }
 
-  streamTrack(track: Track, range: string | undefined, response: Response) {
+  async streamTrack(track: Track, range: string | undefined, response: Response) {
+    if (track.minioKey) {
+      return this.streamFromMinio(track, range, response);
+    }
+
     const filePath = track.localFilePath
       ? join(process.cwd(), track.localFilePath)
       : '';
@@ -616,7 +668,6 @@ export class TracksService implements OnModuleInit {
         'Content-Length': fileSize,
         'Content-Type': track.mimeType,
       });
-
       return createReadStream(filePath).pipe(response);
     }
 
@@ -631,6 +682,50 @@ export class TracksService implements OnModuleInit {
     });
 
     return createReadStream(filePath, { start, end }).pipe(response);
+  }
+
+  private async streamFromMinio(track: Track, range: string | undefined, response: Response) {
+    const storedSize = Number(track.sizeBytes);
+    const fileSize = storedSize > 0
+      ? storedSize
+      : (await this.minio.statObject(track.minioKey!)).size;
+
+    if (!range) {
+      response.writeHead(200, {
+        'Accept-Ranges': 'bytes',
+        'Content-Length': fileSize,
+        'Content-Type': track.mimeType,
+      });
+      const stream = await this.minio.getObject(track.minioKey!);
+      return stream.pipe(response);
+    }
+
+    const { start, end } = this.parseRange(range, fileSize);
+    const chunkSize = end - start + 1;
+
+    response.writeHead(206, {
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunkSize,
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Content-Type': track.mimeType,
+    });
+
+    const stream = await this.minio.getPartialObject(track.minioKey!, start, chunkSize);
+    return stream.pipe(response);
+  }
+
+  async streamCover(filename: string, response: Response) {
+    const objectKey = `covers/${filename}`;
+    const stat = await this.minio.statObject(objectKey).catch(() => null);
+    if (!stat) {
+      throw new NotFoundException('Cover not found.');
+    }
+    const contentType = (stat.metaData?.['content-type'] as string | undefined) ?? 'image/jpeg';
+    response.setHeader('Content-Type', contentType);
+    response.setHeader('Content-Length', stat.size);
+    response.setHeader('Cache-Control', 'public, max-age=604800');
+    const stream = await this.minio.getObject(objectKey);
+    return stream.pipe(response);
   }
 
   private getActiveTracks(offset = 0, limit?: number) {
@@ -860,9 +955,14 @@ export class TracksService implements OnModuleInit {
   }
 
   private serializeTrack(track: Track, index: number): any {
-    let finalCoverUrl = track.coverUrl;
-    if (finalCoverUrl && !finalCoverUrl.includes('/')) {
-      finalCoverUrl = `/uploads/covers/${finalCoverUrl}`;
+    let finalCoverUrl: string | null = null;
+    if (track.minioCoverKey) {
+      const filename = track.minioCoverKey.replace(/^covers\//, '');
+      finalCoverUrl = `/tracks/covers/${encodeURIComponent(filename)}`;
+    } else if (track.coverUrl) {
+      finalCoverUrl = track.coverUrl.includes('/')
+        ? track.coverUrl
+        : `/uploads/covers/${track.coverUrl}`;
     }
 
     return {
