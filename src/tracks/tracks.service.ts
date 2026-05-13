@@ -10,6 +10,7 @@ import { extname, join, parse } from 'path';
 import type { Response } from 'express';
 import { Repository } from 'typeorm';
 import { FavoriteTrack } from '../entities/FavoriteTrack.entity';
+import { FollowedArtist } from '../entities/FollowedArtist.entity';
 import { QueueItem } from '../entities/QueueItem.entity';
 import { RecentPlay } from '../entities/RecentPlay.entity';
 import { Track } from '../entities/Track.entity';
@@ -77,6 +78,8 @@ export class TracksService implements OnModuleInit {
     private readonly tracksRepository: Repository<Track>,
     @InjectRepository(FavoriteTrack)
     private readonly favoriteTracksRepository: Repository<FavoriteTrack>,
+    @InjectRepository(FollowedArtist)
+    private readonly followedArtistsRepository: Repository<FollowedArtist>,
     @InjectRepository(RecentPlay)
     private readonly recentPlaysRepository: Repository<RecentPlay>,
     @InjectRepository(QueueItem)
@@ -105,6 +108,45 @@ export class TracksService implements OnModuleInit {
     return {
       artists: this.buildArtists(tracks),
     };
+  }
+
+  async listFollowedArtists(userId: number) {
+    const rows = await this.followedArtistsRepository.find({
+      where: { user: { id: userId } },
+      order: { createdAt: 'DESC' },
+    });
+    return { artistIds: rows.map((row) => row.artistId) };
+  }
+
+  async followArtist(userId: number, artistId: string) {
+    const tracks = await this.getActiveTracks();
+    const artist = this.buildArtists(tracks).find((candidate) => candidate.id === artistId);
+    if (!artist) {
+      throw new NotFoundException('Artist not found.');
+    }
+
+    const existing = await this.followedArtistsRepository.findOne({
+      where: { user: { id: userId }, artistId },
+    });
+    if (!existing) {
+      await this.followedArtistsRepository.save(
+        this.followedArtistsRepository.create({
+          user: { id: userId } as User,
+          artistId,
+        }),
+      );
+    }
+    return { message: 'Artist followed.', artistId };
+  }
+
+  async unfollowArtist(userId: number, artistId: string) {
+    await this.followedArtistsRepository
+      .createQueryBuilder()
+      .delete()
+      .where('userId = :userId', { userId })
+      .andWhere('artistId = :artistId', { artistId })
+      .execute();
+    return { message: 'Artist unfollowed.', artistId };
   }
 
   async getArtistById(id: string) {
@@ -472,14 +514,14 @@ export class TracksService implements OnModuleInit {
     };
 
     if (audioFile) {
-      const converted = await this.convertToOggIfNeeded(audioFile);
+      const converted = await this.convertToMp3IfNeeded(audioFile);
       const finalAudio = converted
-        ? { filename: converted.filename, size: converted.size, mimetype: 'audio/ogg' }
+        ? { filename: converted.filename, size: converted.size, mimetype: 'audio/mpeg' }
         : { filename: audioFile.filename, size: audioFile.size, mimetype: audioFile.mimetype };
 
       if (converted) {
         fileSizeBytes = converted.size;
-        fileMimeType = 'audio/ogg';
+        fileMimeType = 'audio/mpeg';
         trackData.mimeType = fileMimeType;
         trackData.sizeBytes = String(fileSizeBytes);
         trackData.storageKey = `local:${Buffer.from(converted.filename).toString('base64url')}`;
@@ -571,9 +613,9 @@ export class TracksService implements OnModuleInit {
         try { await this.minio.deleteObject(track.minioKey); } catch { /* best-effort */ }
       }
 
-      const converted = await this.convertToOggIfNeeded(audioFile);
+      const converted = await this.convertToMp3IfNeeded(audioFile);
       const finalAudio = converted
-        ? { filename: converted.filename, size: converted.size, mimetype: 'audio/ogg' }
+        ? { filename: converted.filename, size: converted.size, mimetype: 'audio/mpeg' }
         : { filename: audioFile.filename, size: audioFile.size, mimetype: audioFile.mimetype };
 
       const audioLocalPath = join(process.cwd(), 'uploads', 'tracks', finalAudio.filename);
@@ -997,28 +1039,28 @@ export class TracksService implements OnModuleInit {
   }
 
   /**
-   * Convert uploaded media files (audio/video) to OGG format using FFmpeg.
-   * Returns null if the file is already OGG and no conversion is needed.
+   * Convert uploaded media files (audio/video) to MP3 using FFmpeg.
+   * Returns null if the file is already MP3 and no conversion is needed.
    */
-  private async convertToOggIfNeeded(
+  private async convertToMp3IfNeeded(
     audioFile: Express.Multer.File,
   ): Promise<{ filename: string; size: number } | null> {
     const ext = extname(audioFile.filename).toLowerCase();
-    if (ext === '.ogg') {
-      return null; // already OGG, no conversion needed
+    if (ext === '.mp3') {
+      return null; // already MP3, no conversion needed
     }
 
     const inputPath = join(process.cwd(), 'uploads', 'tracks', audioFile.filename);
     const baseName = parse(audioFile.filename).name;
-    const oggFilename = `${baseName}.ogg`;
-    const outputPath = join(process.cwd(), 'uploads', 'tracks', oggFilename);
+    const mp3Filename = `${baseName}.mp3`;
+    const outputPath = join(process.cwd(), 'uploads', 'tracks', mp3Filename);
 
     try {
       await execFileAsync('ffmpeg', [
         '-i', inputPath,
         '-vn',              // strip video stream
-        '-codec:a', 'libvorbis',
-        '-q:a', '6',       // quality level 6 (~192kbps VBR)
+        '-codec:a', 'libmp3lame',
+        '-q:a', '2',       // high-quality VBR MP3
         '-y',               // overwrite output
         outputPath,
       ]);
@@ -1033,7 +1075,7 @@ export class TracksService implements OnModuleInit {
       }
 
       const stats = statSync(outputPath);
-      return { filename: oggFilename, size: stats.size };
+      return { filename: mp3Filename, size: stats.size };
     } catch (error) {
       console.error('FFmpeg conversion failed:', error);
       // If conversion fails, keep the original file as-is

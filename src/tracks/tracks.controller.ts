@@ -86,6 +86,30 @@ export class TracksController {
     return this.tracksService.listArtists();
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get('artists/following/me')
+  listMyFollowedArtists(@Req() request: AuthenticatedRequest) {
+    return this.tracksService.listFollowedArtists(request.user.sub);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('artists/:id/follow')
+  followArtist(
+    @Param('id') id: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.tracksService.followArtist(request.user.sub, id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('artists/:id/follow')
+  unfollowArtist(
+    @Param('id') id: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.tracksService.unfollowArtist(request.user.sub, id);
+  }
+
   @Get('artists/:id')
   getArtist(@Param('id') id: string) {
     return this.tracksService.getArtistById(id);

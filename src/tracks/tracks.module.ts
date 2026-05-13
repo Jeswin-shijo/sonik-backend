@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { FavoriteTrack } from '../entities/FavoriteTrack.entity';
+import { FollowedArtist } from '../entities/FollowedArtist.entity';
 import { QueueItem } from '../entities/QueueItem.entity';
 import { RecentPlay } from '../entities/RecentPlay.entity';
 import { Track } from '../entities/Track.entity';
@@ -13,7 +14,7 @@ import { TracksService } from './tracks.service';
   imports: [
     AuthModule,
     RealtimeModule,
-    TypeOrmModule.forFeature([Track, FavoriteTrack, RecentPlay, QueueItem]),
+    TypeOrmModule.forFeature([Track, FavoriteTrack, FollowedArtist, RecentPlay, QueueItem]),
   ],
   controllers: [TracksController],
   providers: [TracksService],

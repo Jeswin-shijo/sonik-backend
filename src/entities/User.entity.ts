@@ -7,6 +7,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { FavoriteTrack } from './FavoriteTrack.entity';
+import { FollowedArtist } from './FollowedArtist.entity';
 import { Playlist } from './Playlist.entity';
 import { QueueItem } from './QueueItem.entity';
 import { RecentPlay } from './RecentPlay.entity';
@@ -60,6 +61,9 @@ export class User {
 
   @OneToMany(() => FavoriteTrack, (favoriteTrack) => favoriteTrack.user)
   favoriteTracks!: FavoriteTrack[];
+
+  @OneToMany(() => FollowedArtist, (followedArtist) => followedArtist.user)
+  followedArtists!: FollowedArtist[];
 
   @OneToMany(() => RecentPlay, (recentPlay) => recentPlay.user)
   recentPlays!: RecentPlay[];

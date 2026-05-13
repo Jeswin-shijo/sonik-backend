@@ -5,6 +5,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { FavoriteTrack } from './entities/FavoriteTrack.entity';
+import { FollowedArtist } from './entities/FollowedArtist.entity';
 import { Playlist } from './entities/Playlist.entity';
 import { PlaylistTrack } from './entities/PlaylistTrack.entity';
 import { QueueItem } from './entities/QueueItem.entity';
@@ -40,6 +41,7 @@ const databaseImports = isTestEnvironment
             Playlist,
             PlaylistTrack,
             FavoriteTrack,
+            FollowedArtist,
             RecentPlay,
             QueueItem,
             Singer,
